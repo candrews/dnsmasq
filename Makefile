@@ -51,6 +51,8 @@ top!=pwd
 # GNU make way.
 top?=$(CURDIR)
 
+systemd_system_unit_dir = `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_SYSTEMD $(PKG_CONFIG) --variable=systemdsystemunitdir systemd`
+dbus_sysconfdir = `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_DBUS $(PKG_CONFIG) --variable=sysconfdir dbus-1`
 dbus_cflags =   `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_DBUS $(PKG_CONFIG) --cflags dbus-1` 
 dbus_libs =     `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_DBUS $(PKG_CONFIG) --libs dbus-1` 
 idn_cflags =    `echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_IDN $(PKG_CONFIG) --cflags libidn` 
@@ -84,7 +86,7 @@ all : $(BUILDDIR)
  top="$(top)" \
  build_cflags="$(version) $(dbus_cflags) $(idn_cflags) $(ct_cflags) $(lua_cflags) $(nettle_cflags)" \
  build_libs="$(dbus_libs) $(idn_libs) $(ct_libs) $(lua_libs) $(sunos_libs) $(nettle_libs) $(gmp_libs)" \
- -f $(top)/Makefile dnsmasq 
+ -f $(top)/Makefile dnsmasq
 
 mostly_clean :
 	rm -f $(BUILDDIR)/*.mo $(BUILDDIR)/*.pot 
@@ -94,13 +96,20 @@ clean : mostly_clean
 	rm -f $(BUILDDIR)/dnsmasq_baseline
 	rm -f core */core
 	rm -f *~ contrib/*/*~ */*~
+	rm -f $(BUILDDIR)/dnsmasq.service
 
-install : all install-common
+install : all install-common install-dbus install-systemd
 
 install-common :
 	$(INSTALL) -d $(DESTDIR)$(BINDIR) -d $(DESTDIR)$(MANDIR)/man8
 	$(INSTALL) -m 644 $(MAN)/dnsmasq.8 $(DESTDIR)$(MANDIR)/man8 
 	$(INSTALL) -m 755 $(BUILDDIR)/dnsmasq $(DESTDIR)$(BINDIR)
+
+install-dbus :
+	if [ "x${dbus_sysconfdir}" != "x" ]; then $(INSTALL) $(top)/dbus/dnsmasq.conf -D $(DESTDIR)$(dbus_sysconfdir)/dbus-1/system.d/dnsmasq.conf ; fi
+
+install-systemd :
+	if [ "x${systemd_system_unit_dir}" != "x" ]; then $(INSTALL) $(BUILDDIR)/dnsmasq.service -D $(DESTDIR)$(systemd_system_unit_dir)/dnsmasq.service ; fi
 
 all-i18n : $(BUILDDIR)
 	@cd $(BUILDDIR) && $(MAKE) \
@@ -156,8 +165,8 @@ $(objs): $(copts_conf) $(hdrs)
 .c.o:
 	$(CC) $(CFLAGS) $(COPTS) $(i18n) $(build_cflags) $(RPM_OPT_FLAGS) -c $<	
 
-dnsmasq : $(objs)
-	$(CC) $(LDFLAGS) -o $@ $(objs) $(build_libs) $(LIBS) 
+dnsmasq : $(objs) dnsmasq.service
+	$(CC) $(LDFLAGS) -o $@ $(objs) $(build_libs) $(LIBS)
 
 dnsmasq.pot : $(objs:.o=.c) $(hdrs)
 	$(XGETTEXT) -d dnsmasq --foreign-user --omit-header --keyword=_ -o $@ -i $(objs:.o=.c)
@@ -165,4 +174,12 @@ dnsmasq.pot : $(objs:.o=.c) $(hdrs)
 %.mo : $(top)/$(PO)/%.po dnsmasq.pot
 	$(MSGMERGE) -o - $(top)/$(PO)/$*.po dnsmasq.pot | $(MSGFMT) -o $*.mo -
 
-.PHONY : all clean mostly_clean install install-common all-i18n install-i18n merge baseline bloatcheck
+dnsmasq.service :
+	sed \
+		$(top)/$(SRC)/dnsmasq.service.in \
+		-e "s|BusName=.*|`echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_DBUS echo '\0'`|" \
+		-e "s|\@dbusopts\@|`echo $(COPTS) | $(top)/bld/pkg-wrapper HAVE_DBUS echo '-1'`|" \
+		-e "s|\@bindir\@|$(BINDIR)|" \
+		 > $(top)/$(SRC)/dnsmasq.service
+
+.PHONY : all clean mostly_clean install install-common install-dbus install-systemd all-i18n install-i18n merge baseline bloatcheck

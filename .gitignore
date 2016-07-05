@@ -1,3 +1,4 @@
+src/dnsmasq.service
 src/*.o
 src/*.mo
 src/dnsmasq.pot
